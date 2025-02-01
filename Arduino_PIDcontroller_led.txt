@@ -1,0 +1,65 @@
+#include <PID_v1.h>
+
+const int photores = A0;   // LDR input pin
+const int led = 9;         // LED output pin
+const int disturbanceLed = 10; // Disturbance LED output pin
+double lightLevel;         // Indirectly store the light level
+
+// Tuning parameters
+double Kp = 0;              // Proportional gain
+double Ki = 10;             // Integral gain
+double Kd = 0;              // Differential gain
+int Disturbance = 0;       // ערך ההפרעה
+
+// Record the set point as well as the controller input and output
+double Setpoint, Input, Output = 0;
+
+// Create a controller that is linked to the specified Input, Output, and Setpoint
+PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
+const int sampleRate = 1;        // Time interval of the PID control
+
+void setup() {
+  lightLevel = analogRead(photores);               // Read the light level
+  Input = map(lightLevel, 0, 1023, 0, 255);        // Scale the input                       
+  Serial.begin(115200);                            // Initialise serial communications
+  myPID.SetMode(AUTOMATIC);                        // Turn on the PID control
+  myPID.SetSampleTime(sampleRate);                 // Assign the sample rate of the control  
+}
+
+void loop() {
+  // Update the light level and scale it to match the PID range
+  lightLevel = analogRead(photores);
+  Input = map(lightLevel, 0, 1023, 0, 255);
+  
+  // Check for a new SetPoint or Disturbance value from the Serial Monitor
+  if (Serial.available() > 0) {
+    String data = Serial.readStringUntil('\n');  // קריאה עד newline
+    char type = data.charAt(0);                 // זיהוי סוג הנתון
+    String valueString = data.substring(1);     // חילוץ הערך אחרי התו הראשון
+
+    // עדכון SetPoint, Disturbance, או ערכי PID
+    if (type == 'S') {
+      Setpoint = valueString.toDouble();        // המרה למספר עשרוני
+      //Setpoint = map(Setpoint, 0, 255, 0, 200); // התאמה לטווח 0-200
+    } else if (type == 'D') {
+      Disturbance = valueString.toInt();        // המרה למספר שלם
+      analogWrite(disturbanceLed, Disturbance); // שליטה בנורת ההפרעה
+    } else if (type == 'P') {
+      Kp = valueString.toDouble();              // עדכון Kp
+      myPID.SetTunings(Kp, Ki, Kd);             // עדכון ה-PID
+    } else if (type == 'I') {
+      Ki = valueString.toDouble();              // עדכון Ki
+      myPID.SetTunings(Kp, Ki, Kd);             // עדכון ה-PID
+    } else if (type == 'd') {
+      Kd = valueString.toDouble();              // עדכון Kd
+      myPID.SetTunings(Kp, Ki, Kd);             // עדכון ה-PID
+    }
+  }
+
+  // Calculate the PID output
+  myPID.Compute();
+  analogWrite(led, Output);                      // Power the LED based on PID output
+
+  // שליחת ערכי Input בחזרה לפרוססינג
+  Serial.println(Input);
+}

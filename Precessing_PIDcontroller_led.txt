@@ -1,0 +1,285 @@
+import processing.serial.*;
+
+Serial myPort;  // משתנה לתקשורת עם הארדואינו
+
+// משתנים למד SetPoint
+int sliderValue = 0; // ערך המד SetPoint
+boolean isDraggingSetPoint = false; // מצב גרירה למד SetPoint
+
+// משתנים למד Disturbance
+int disturbanceValue = 0; // ערך המד Disturbance
+boolean isDraggingDisturbance = false; // מצב גרירה למד Disturbance
+
+// משתנים ל-PID
+String kpText = "0"; // טקסט שמוזן עבור Kp
+String kiText = "10"; // טקסט שמוזן עבור Ki
+String kdText = "0"; // טקסט שמוזן עבור Kd
+boolean isEditingKp = false; // מעקב אחר תיבת Kp
+boolean isEditingKi = false; // מעקב אחר תיבת Ki
+boolean isEditingKd = false; // מעקב אחר תיבת Kd
+
+// משתנים לגרף
+float[] currentLightValues = new float[500]; // ערכים של Current Light (Input)
+float[] setPointValues = new float[500];    // ערכים של SetPoint
+int graphIndex = 0; // אינדקס לגרף
+
+int currentLightValue = 0; // ערך Input המתקבל מארדואינו
+
+void setup() {
+  size(800, 600); // גודל החלון
+  myPort = new Serial(this, Serial.list()[0], 115200); // פתיחת תקשורת סריאלית
+}
+
+void draw() {
+   background(255, 230, 240); // צבע רקע ורוד בהיר
+
+  // ---- גרף ביצועים ----
+  drawPerformanceGraphs(50, 30, (width - 120) / 2, 300, false); // גרף Current Light
+  drawPerformanceGraphs(50 + (width - 120) / 2 + 20, 30, (width - 120) / 2, 300, true); // גרף SetPoint
+
+  // ---- חלונית CONTROL PANEL ----
+  drawControlPanel(50, 350, width - 100, 200);
+
+  // ---- בדיקת מצב אסור ----
+  if (sliderValue < disturbanceValue) {
+    drawErrorMessageOverlay(); // ציור הודעת השגיאה
+  }
+}
+boolean mouseOverTextBox(int x, int y) {
+  return mouseX > x && mouseX < x + 60 && mouseY > y && mouseY < y + 25; // התאמה לגודל התיבות
+}
+
+void drawControlPanel(int x, int y, int w, int h) {
+  fill(255, 200, 220); // צבע חלונית ורוד בהיר
+  noStroke();
+  rect(x, y, w, h, 10); // חלונית מעוגלת
+
+  fill(0);
+  textSize(20);
+  textAlign(CENTER, CENTER);
+  text("Control Panel", x + w / 2, y + 20); // כותרת
+
+  // ---- מד SetPoint ----
+  drawCircularMeter(x + w / 4, y + 120, sliderValue, "SetPoint");
+
+  // ---- מד Disturbance ----
+  drawCircularMeter(x + 3 * w / 4, y + 120, disturbanceValue, "Disturbance");
+
+  // ---- תיבות טקסט ל-PID ----
+  drawPidInputs(x + w / 2 - 30, y + 70);
+}
+
+void drawCircularMeter(int x, int y, int value, String label) {
+  int meterRadius = 50;
+
+  // ציור המעגל
+  fill(255, 180, 200); // צבע ורוד למעגל
+  ellipse(x, y, meterRadius * 2, meterRadius * 2);
+
+  // ציור הקו המסמן את הערך
+  float angle = map(value, 0, 255, 0, TWO_PI) - HALF_PI;
+  float lineX = x + cos(angle) * meterRadius;
+  float lineY = y + sin(angle) * meterRadius;
+  stroke(255, 0, 127); // ורוד כהה לקו
+  strokeWeight(3);
+  line(x, y, lineX, lineY);
+
+  // כיתוב הערך
+  fill(0);
+  noStroke();
+  textSize(14);
+  textAlign(CENTER, CENTER);
+  text(label + "\n" + value + " (" + int(map(value, 0, 255, 0, 100)) + "%)", x, y + meterRadius + 20);
+}
+
+void drawPidInputs(int x, int y) {
+  textSize(14);
+  textAlign(LEFT, CENTER);
+
+  // תיבת Kp
+  text("Kp:", x - 40, y);
+  drawTextBox(x, y - 10, kpText, isEditingKp);
+
+  // תיבת Ki
+  text("Ki:", x - 40, y + 40);
+  drawTextBox(x, y + 30, kiText, isEditingKi);
+
+  // תיבת Kd
+  text("Kd:", x - 40, y + 80);
+  drawTextBox(x, y + 70, kdText, isEditingKd);
+}
+
+void drawTextBox(int x, int y, String textValue, boolean isActive) {
+  fill(isActive ? 255 : 200, 200, 255); // צבע סגול-ורוד לתיבה פעילה
+  stroke(150, 100, 150);
+  rect(x, y, 60, 25);
+  fill(0);
+  noStroke();
+  textAlign(LEFT, CENTER);
+  text(textValue, x + 5, y + 12);
+}
+
+void drawPerformanceGraphs(int x, int y, int w, int h, boolean isSetPoint) {
+  // רקע החלונית
+  fill(255, 210, 220); // ורוד בהיר לרקע
+  stroke(0);
+  rect(x, y, w, h, 10);
+
+  // רשת (Grid) וערכים בציר Y
+  stroke(200);
+  fill(0);
+  textSize(10);
+  textAlign(RIGHT, CENTER);
+  for (int i = 0; i <= 255; i += 50) {
+    float yPos = map(i, 0, 255, y + h, y);
+    line(x, yPos, x + w, yPos); // קווים אופקיים
+    text(i, x - 5, yPos); // ערכים בציר Y
+  }
+  for (int i = 0; i <= 10; i++) {
+    line(x + i * w / 10, y, x + i * w / 10, y + h); // קווים אנכיים
+  }
+
+  // נתונים
+  if (isSetPoint) {
+    stroke(255, 105, 180); // אדום-ורוד ל-SetPoint
+    noFill();
+    beginShape();
+    for (int i = 0; i < graphIndex; i++) {
+      float xPos = map(i, 0, currentLightValues.length, x, x + w);
+      float yPos = map(setPointValues[i], 0, 255, y + h, y);
+      vertex(xPos, yPos);
+    }
+    endShape();
+  } else {
+    stroke(255, 20, 147); // ורוד ל-Current Light
+    noFill();
+    beginShape();
+    for (int i = 0; i < graphIndex; i++) {
+      float xPos = map(i, 0, currentLightValues.length, x, x + w);
+      float yPos = map(currentLightValues[i], 0, 255, y + h, y);
+      vertex(xPos, yPos);
+    }
+    endShape();
+  }
+}
+
+void mousePressed() {
+  if (mouseOverCircularMeter(width / 4, 470)) {
+    isDraggingSetPoint = true;
+  }
+  if (mouseOverCircularMeter(3 * width / 4, 470)) {
+    isDraggingDisturbance = true;
+  }
+
+  // בדיקה אם לחץ על תיבות הטקסט
+  if (mouseOverTextBox(370, 420)) {
+    isEditingKp = true;
+    isEditingKi = false;
+    isEditingKd = false;
+  } else if (mouseOverTextBox(370, 460)) {
+    isEditingKi = true;
+    isEditingKp = false;
+    isEditingKd = false;
+  } else if (mouseOverTextBox(370, 500)) {
+    isEditingKd = true;
+    isEditingKp = false;
+    isEditingKi = false;
+  } else {
+    isEditingKp = isEditingKi = isEditingKd = false;
+  }
+}
+
+void mouseDragged() {
+  if (isDraggingSetPoint) {
+    sliderValue = calculateValueFromAngle(width / 4, 470);
+    myPort.write("S" + sliderValue + "\n");
+  }
+  if (isDraggingDisturbance) {
+    disturbanceValue = calculateValueFromAngle(3 * width / 4, 470);
+    myPort.write("D" + disturbanceValue + "\n");
+  }
+}
+
+void mouseReleased() {
+  isDraggingSetPoint = false;
+  isDraggingDisturbance = false;
+}
+
+boolean mouseOverCircularMeter(int x, int y) {
+  int meterRadius = 50;
+  return dist(mouseX, mouseY, x, y) <= meterRadius;
+}
+
+int calculateValueFromAngle(int x, int y) {
+  float angle = atan2(mouseY - y, mouseX - x) + PI / 2;
+  if (angle < 0) angle += TWO_PI;
+  return int(map(angle, 0, TWO_PI, 0, 255));
+}
+
+void keyPressed() {
+  if (isEditingKp) {
+    kpText = handleTextInput(kpText);
+    if (key == ENTER || key == RETURN) {
+      myPort.write("P" + kpText + "\n");
+      isEditingKp = false;
+    }
+  } else if (isEditingKi) {
+    kiText = handleTextInput(kiText);
+    if (key == ENTER || key == RETURN) {
+      myPort.write("I" + kiText + "\n");
+      isEditingKi = false;
+    }
+  } else if (isEditingKd) {
+    kdText = handleTextInput(kdText);
+    if (key == ENTER || key == RETURN) {
+      myPort.write("d" + kdText + "\n");
+      isEditingKd = false;
+    }
+  }
+}
+
+String handleTextInput(String currentText) {
+  if (key == BACKSPACE && currentText.length() > 0) {
+    return currentText.substring(0, currentText.length() - 1);
+  } else if ((key >= '0' && key <= '9') || key == '.') {
+    return currentText + key;
+  }
+  return currentText;
+}
+
+void serialEvent(Serial myPort) {
+  if (myPort.available() > 0) {
+    String data = myPort.readStringUntil('\n');
+    if (data != null && data.trim().length() > 0) {
+      currentLightValue = int(data.trim());
+      updateGraph(currentLightValue, sliderValue);
+    }
+  }
+}
+
+void updateGraph(float currentLight, float setPoint) {
+  if (graphIndex < currentLightValues.length) {
+    currentLightValues[graphIndex] = currentLight;
+    setPointValues[graphIndex] = setPoint;
+    graphIndex++;
+  } else {
+    arrayCopy(currentLightValues, 1, currentLightValues, 0, currentLightValues.length - 1);
+    arrayCopy(setPointValues, 1, setPointValues, 0, setPointValues.length - 1);
+    currentLightValues[currentLightValues.length - 1] = currentLight;
+    setPointValues[setPointValues.length - 1] = setPoint;
+  }
+}
+
+void drawErrorMessageOverlay() {
+  pushStyle(); // שמירת סגנונות קודמים
+  fill(255, 255, 255, 200); // רקע חצי שקוף לבן
+  rectMode(CENTER);
+  noStroke();
+  rect(width / 2, height / 2, 300, 100); // מלבן במרכז המסך
+
+  fill(255, 0, 0); // טקסט אדום
+  textSize(24);
+  textAlign(CENTER, CENTER);
+  text("ERROR", width / 2, height / 2); // כיתוב הודעת השגיאה
+  popStyle(); // שחזור הסגנונות
+}
